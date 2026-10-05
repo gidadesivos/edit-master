@@ -4,6 +4,7 @@ import { parseProject, serializeProject } from './engine/serialize';
 import { useEditor } from './engine/store';
 import { loadAutosave, saveAutosave } from './media/persist';
 import {
+  addTextAtPlayhead,
   deleteSelection,
   duplicateSelection,
   importMedia,
@@ -30,7 +31,11 @@ function isTyping(e: KeyboardEvent): boolean {
   const el = e.target as HTMLElement | null;
   if (!el) return false;
   if (el.isContentEditable) return true;
-  if (el instanceof HTMLInputElement) return !['range', 'checkbox', 'radio', 'button', 'color'].includes(el.type);
+  if (el instanceof HTMLInputElement) {
+    // A focused slider keeps its own keyboard navigation (arrows, Home/End, PageUp/PageDown).
+    if (el.type === 'range') return /^(Arrow|Home$|End$|Page)/.test(e.key);
+    return !['checkbox', 'radio', 'button', 'color'].includes(el.type);
+  }
   return el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement;
 }
 
@@ -54,6 +59,7 @@ function useShortcuts(openExport: () => void) {
       else if (mod) handled = false;
       else if (key === ' ' || e.code === 'Space') togglePlay();
       else if (key === 's') splitAtPlayhead();
+      else if (key === 't') addTextAtPlayhead();
       else if (key === 'delete' || key === 'backspace') deleteSelection(e.shiftKey);
       else if (key === 'arrowleft') stepFrames(e.shiftKey ? -s.project.settings.fps : -1);
       else if (key === 'arrowright') stepFrames(e.shiftKey ? s.project.settings.fps : 1);

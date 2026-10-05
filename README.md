@@ -6,7 +6,7 @@ Seus arquivos nunca saem do seu computador.
 
 ![Edit Master](docs/screenshot.png)
 
-## O que já funciona (v0.1)
+## O que já funciona
 
 - Importar vídeo, áudio e imagem (arrastar e soltar ou botão Importar) — MP4, MOV, WebM, MKV, MP3, WAV, M4A, OGG, FLAC, PNG, JPG, WebP
 - Biblioteca de mídia com miniaturas
@@ -20,12 +20,23 @@ Seus arquivos nunca saem do seu computador.
 - Exportação MP4 (H.264 + AAC no Windows) de 480p a 4K, 24–60 fps, processada 100% no seu PC
 - App Windows com atualização automática
 
+**Fase 2**
+- **Textos**: fonte, tamanho, cor, negrito/itálico, alinhamento, contorno, sombra, fundo, 6 estilos prontos
+- **Animações de texto** de entrada e saída: aparecer, subir, descer, pop, máquina de escrever, desfoque
+- **Filtros** (P&B, Sépia, Vintage, Quente, Frio, Vívido, Desbotado, Dramático) e **ajustes de cor**:
+  brilho, contraste, saturação, temperatura, matiz, desfoque e vinheta
+- **Transições** entre clipes: dissolver, escurecer, deslizar, cortina, zoom, círculo (duração ajustável)
+- **Keyframes** de escala, posição, rotação e opacidade (botão ◆), com navegação entre keyframes
+- **Velocidade** de 0,25x a 4x (os clipes seguintes se ajustam sozinhos)
+- **Separar áudio** do vídeo para uma faixa de áudio
+
 ### Atalhos
 
 | Tecla | Ação |
 |---|---|
 | `Espaço` | Reproduzir / pausar |
 | `S` ou `Ctrl+B` | Dividir no cursor |
+| `T` | Novo texto no cursor |
 | `Del` / `Shift+Del` | Apagar / apagar e fechar o espaço |
 | `Ctrl+Z` / `Ctrl+Shift+Z` | Desfazer / refazer |
 | `Ctrl+D` | Duplicar |
@@ -95,6 +106,6 @@ O preview e a exportação usam o **mesmo compositor**, então o que aparece na 
 
 ## Próximas fases
 
-- **Fase 2**: textos e títulos animados, transições, filtros e ajustes de cor, velocidade/reverso, keyframes, separar áudio
+- **Fase 2 (restante)**: reverso, curvas de velocidade, mais fontes embutidas, máscaras
 - **Fase 3**: legendas automáticas (Whisper local), remover fundo, chroma key, proxies para 4K
 - **Fase 4**: modo offline completo da versão web (PWA), idiomas, mais formatos de exportação

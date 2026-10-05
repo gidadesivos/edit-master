@@ -41,8 +41,72 @@ export interface Transform {
   rotation: number;
 }
 
+export type ClipKind = 'media' | 'text';
+
+export type TextAnimation = 'none' | 'fade' | 'slide-up' | 'slide-down' | 'pop' | 'typewriter' | 'blur';
+
+export interface TextStyle {
+  content: string;
+  font: string;
+  /** Font size as a fraction of the canvas height (resolution independent). */
+  size: number;
+  color: string;
+  bold: boolean;
+  italic: boolean;
+  align: 'left' | 'center' | 'right';
+  strokeColor: string;
+  /** Outline width as a fraction of the font size. 0 = none. */
+  strokeWidth: number;
+  shadow: boolean;
+  /** Background box colour, or '' for none. */
+  background: string;
+  backgroundOpacity: number;
+  animIn: TextAnimation;
+  animOut: TextAnimation;
+  animInDuration: Seconds;
+  animOutDuration: Seconds;
+}
+
+export type FilterPreset = 'none' | 'bw' | 'sepia' | 'vintage' | 'warm' | 'cool' | 'vivid' | 'fade' | 'dramatic';
+
+/** Colour adjustments. All 0 = untouched. */
+export interface Adjustments {
+  /** -1..1 */
+  brightness: number;
+  /** -1..1 */
+  contrast: number;
+  /** -1..1 */
+  saturation: number;
+  /** -180..180 degrees */
+  hue: number;
+  /** -1 (cool) .. 1 (warm) */
+  temperature: number;
+  /** 0..1 */
+  blur: number;
+  /** 0..1 */
+  vignette: number;
+}
+
+export type TransitionType = 'fade' | 'black' | 'slide-left' | 'slide-up' | 'wipe-left' | 'zoom' | 'circle';
+
+/** Transition into a clip, played at its start over the end of the previous clip on the same track. */
+export interface Transition {
+  type: TransitionType;
+  duration: Seconds;
+}
+
+export type KeyframeProp = 'x' | 'y' | 'scale' | 'rotation' | 'opacity';
+
+export interface Keyframe {
+  /** Time relative to the clip start, in timeline seconds. */
+  t: Seconds;
+  v: number;
+}
+
 export interface Clip {
   id: string;
+  kind: ClipKind;
+  /** Media asset id ('' for text clips). */
   assetId: string;
   trackId: string;
   /** Position on the timeline. */
@@ -61,6 +125,13 @@ export interface Clip {
   /** Fade in/out of audio, seconds. */
   fadeIn: Seconds;
   fadeOut: Seconds;
+  filter: FilterPreset;
+  adjust: Adjustments;
+  transitionIn: Transition | null;
+  /** Animated properties. When a property has keyframes, they override the static value. */
+  keyframes: Partial<Record<KeyframeProp, Keyframe[]>>;
+  /** Present for text clips. */
+  text?: TextStyle;
 }
 
 export interface ProjectSettings {
@@ -85,3 +156,32 @@ export interface Project {
 }
 
 export const DEFAULT_TRANSFORM: Transform = { x: 0, y: 0, scale: 1, rotation: 0 };
+
+export const DEFAULT_ADJUSTMENTS: Adjustments = {
+  brightness: 0,
+  contrast: 0,
+  saturation: 0,
+  hue: 0,
+  temperature: 0,
+  blur: 0,
+  vignette: 0,
+};
+
+export const DEFAULT_TEXT_STYLE: TextStyle = {
+  content: 'Seu texto aqui',
+  font: 'Segoe UI',
+  size: 0.08,
+  color: '#ffffff',
+  bold: true,
+  italic: false,
+  align: 'center',
+  strokeColor: '#000000',
+  strokeWidth: 0.06,
+  shadow: true,
+  background: '',
+  backgroundOpacity: 0.6,
+  animIn: 'fade',
+  animOut: 'fade',
+  animInDuration: 0.4,
+  animOutDuration: 0.4,
+};

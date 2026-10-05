@@ -5,8 +5,10 @@ import {
   clipEnd,
   clipsAtTime,
   createProject,
+  addTextClip,
   deleteClips,
   duplicateClip,
+  extractAudio,
   removeAsset,
   rippleDelete,
   splitAt,
@@ -115,7 +117,7 @@ export function duplicateSelection(): void {
 }
 
 export function resetClipTransform(clipId: string): void {
-  editor().commit((p) => updateClip(p, clipId, { transform: { ...DEFAULT_TRANSFORM }, opacity: 1 }));
+  editor().commit((p) => updateClip(p, clipId, { transform: { ...DEFAULT_TRANSFORM }, opacity: 1, keyframes: {} }));
 }
 
 function safeFileName(name: string): string {
@@ -192,4 +194,25 @@ export function stepFrames(n: number): void {
   s.setPlaying(false);
   const fps = s.project.settings.fps;
   s.setPlayhead(Math.round(s.playhead * fps + n) / fps);
+}
+
+export function addTextAtPlayhead(): void {
+  const { playhead } = editor();
+  let id = '';
+  editor().commit((p) => {
+    const r = addTextClip(p, playhead);
+    id = r.clipId;
+    return r.project;
+  });
+  if (id) editor().select([id]);
+}
+
+export function extractAudioFromClip(clipId: string): void {
+  let id: string | null = null;
+  editor().commit((p) => {
+    const r = extractAudio(p, clipId);
+    id = r.clipId;
+    return r.project;
+  });
+  if (id) toast('Áudio separado para uma faixa de áudio', 'success');
 }

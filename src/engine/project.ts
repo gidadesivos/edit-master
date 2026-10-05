@@ -3,9 +3,14 @@
  * Every function returns a new Project (or the same instance when nothing changed),
  * which keeps undo/redo trivial and makes the logic easy to unit test.
  */
+import { scaleKeyframes, shiftKeyframes, splitKeyframes } from './keyframes';
 import {
+  DEFAULT_ADJUSTMENTS,
+  DEFAULT_TEXT_STYLE,
   DEFAULT_TRANSFORM,
   type Clip,
+  type TextStyle,
+  type Transition,
   type MediaAsset,
   type Project,
   type ProjectSettings,
@@ -138,10 +143,34 @@ function withClip(p: Project, clip: Clip): Project {
   return touch(p, { clips: { ...p.clips, [clip.id]: clip } });
 }
 
+/** Text and image clips can be stretched to any length; audio/video are limited by the source. */
+export function isUnbounded(p: Project, clip: Clip): boolean {
+  return clip.kind === 'text' || p.assets[clip.assetId]?.kind === 'image';
+}
+
 function sourceLimit(p: Project, clip: Clip): Seconds {
   const asset = p.assets[clip.assetId];
-  if (!asset || asset.kind === 'image') return Infinity;
+  if (!asset || isUnbounded(p, clip)) return Infinity;
   return asset.duration;
+}
+
+/** A fresh clip with every field at its default. */
+export function makeClip(fields: Pick<Clip, 'assetId' | 'trackId' | 'start' | 'in' | 'out'> & Partial<Clip>): Clip {
+  return {
+    id: uid(),
+    kind: 'media',
+    speed: 1,
+    volume: 1,
+    opacity: 1,
+    transform: { ...DEFAULT_TRANSFORM },
+    fadeIn: 0,
+    fadeOut: 0,
+    filter: 'none',
+    adjust: { ...DEFAULT_ADJUSTMENTS },
+    transitionIn: null,
+    keyframes: {},
+    ...fields,
+  };
 }
 
 // ---------- assets ----------
@@ -221,21 +250,43 @@ export function addClip(p: Project, assetId: string, opts: AddClipOptions = {}):
     }
   }
 
-  const clip: Clip = {
-    id: uid(),
-    assetId,
+  const clip = makeClip({ assetId, trackId: track.id, start, in: 0, out: duration });
+  return { project: withClip(project, clip), clipId: clip.id };
+}
+
+export const DEFAULT_TEXT_DURATION = 3;
+
+/** Adds a text clip on the top-most video track that has room (creating one if needed). */
+export function addTextClip(
+  p: Project,
+  start: Seconds,
+  style: Partial<TextStyle> = {},
+  duration = DEFAULT_TEXT_DURATION,
+): { project: Project; clipId: string } {
+  let project = p;
+  start = Math.max(0, start);
+  let track = project.tracks.find((t) => t.kind === 'video' && canPlace(project, t.id, start, duration));
+  if (!track) {
+    const r = addTrack(project, 'video');
+    project = r.project;
+    track = project.tracks.find((t) => t.id === r.trackId)!;
+  }
+  const clip = makeClip({
+    kind: 'text',
+    assetId: '',
     trackId: track.id,
     start,
     in: 0,
     out: duration,
-    speed: 1,
-    volume: 1,
-    opacity: 1,
-    transform: { ...DEFAULT_TRANSFORM },
-    fadeIn: 0,
-    fadeOut: 0,
-  };
+    text: { ...DEFAULT_TEXT_STYLE, ...style },
+  });
   return { project: withClip(project, clip), clipId: clip.id };
+}
+
+export function updateText(p: Project, clipId: string, patch: Partial<TextStyle>): Project {
+  const clip = p.clips[clipId];
+  if (!clip?.text) return p;
+  return withClip(p, { ...clip, text: { ...clip.text, ...patch } });
 }
 
 export function updateClip(p: Project, clipId: string, patch: Partial<Omit<Clip, 'id'>>): Project {
@@ -262,7 +313,7 @@ export function moveClip(p: Project, clipId: string, trackId: string, start: Sec
 export function trimClip(p: Project, clipId: string, edge: 'start' | 'end', time: Seconds): Project {
   const clip = p.clips[clipId];
   if (!clip) return p;
-  const isImage = p.assets[clip.assetId]?.kind === 'image';
+  const isImage = isUnbounded(p, clip);
   const limit = sourceLimit(p, clip);
   const others = clipsOnTrack(p, clip.trackId, new Set([clipId]));
   const end = clipEnd(clip);
@@ -279,10 +330,11 @@ export function trimClip(p: Project, clipId: string, edge: 'start' | 'end', time
   let min = prev ? clipEnd(prev) : 0;
   if (!isImage) min = Math.max(min, clip.start - clip.in / clip.speed);
   const newStart = Math.max(Math.min(time, end - MIN_CLIP_DURATION), min);
+  const keyframes = shiftKeyframes(clip, newStart - clip.start);
   if (isImage) {
-    return withClip(p, { ...clip, start: newStart, in: 0, out: (end - newStart) * clip.speed });
+    return withClip(p, { ...clip, start: newStart, in: 0, out: (end - newStart) * clip.speed, keyframes });
   }
-  return withClip(p, { ...clip, start: newStart, in: clip.in + (newStart - clip.start) * clip.speed });
+  return withClip(p, { ...clip, start: newStart, in: clip.in + (newStart - clip.start) * clip.speed, keyframes });
 }
 
 export function splitClip(p: Project, clipId: string, time: Seconds): { project: Project; newClipId: string | null } {
@@ -293,8 +345,22 @@ export function splitClip(p: Project, clipId: string, time: Seconds): { project:
     return { project: p, newClipId: null };
   }
   const cut = clip.in + (time - clip.start) * clip.speed;
-  const left: Clip = { ...clip, out: cut, fadeOut: 0 };
-  const right: Clip = { ...clip, id: uid(), start: time, in: cut, fadeIn: 0, transform: { ...clip.transform } };
+  const [leftKf, rightKf] = splitKeyframes(clip, time - clip.start);
+  const unbounded = isUnbounded(p, clip);
+  const left: Clip = { ...clip, out: cut, fadeOut: 0, keyframes: leftKf };
+  const right: Clip = {
+    ...clip,
+    id: uid(),
+    start: time,
+    // Text/images restart their "source" at 0 so text animations play relative to each piece.
+    in: unbounded ? 0 : cut,
+    out: unbounded ? clip.out - cut : clip.out,
+    fadeIn: 0,
+    transitionIn: null,
+    transform: { ...clip.transform },
+    keyframes: rightKf,
+  };
+  if (unbounded) left.in = 0;
   return {
     project: touch(p, { clips: { ...p.clips, [left.id]: left, [right.id]: right } }),
     newClipId: right.id,
@@ -381,4 +447,101 @@ export function snapRange(start: Seconds, duration: Seconds, points: Seconds[], 
   if (s !== start && (e === start + duration || ds <= de)) return s;
   if (e !== start + duration) return e - duration;
   return start;
+}
+
+// ---------- speed, audio, transitions ----------
+
+export const MIN_SPEED = 0.25;
+export const MAX_SPEED = 4;
+
+/**
+ * Changes playback speed. The clip keeps its source range, so its length changes; clips after it on the
+ * same track are shifted (ripple) so nothing overlaps and no gaps appear.
+ */
+export function setClipSpeed(p: Project, clipId: string, speed: number): Project {
+  const clip = p.clips[clipId];
+  if (!clip || clip.kind === 'text') return p;
+  speed = Math.min(MAX_SPEED, Math.max(MIN_SPEED, speed));
+  if (Math.abs(speed - clip.speed) < 1e-6) return p;
+  const oldEnd = clipEnd(clip);
+  const factor = clip.speed / speed;
+  const updated: Clip = {
+    ...clip,
+    speed,
+    keyframes: scaleKeyframes(clip, factor),
+    fadeIn: clip.fadeIn * factor,
+    fadeOut: clip.fadeOut * factor,
+  };
+  const delta = clipEnd(updated) - oldEnd;
+  const clips = { ...p.clips, [clipId]: updated };
+  for (const c of Object.values(p.clips)) {
+    if (c.id !== clipId && c.trackId === clip.trackId && c.start >= oldEnd - EPS) {
+      clips[c.id] = { ...c, start: Math.max(0, c.start + delta) };
+    }
+  }
+  return touch(p, { clips });
+}
+
+/** Copies the audio of a video clip to an audio track and mutes the original. */
+export function extractAudio(p: Project, clipId: string): { project: Project; clipId: string | null } {
+  const clip = p.clips[clipId];
+  const asset = clip && p.assets[clip.assetId];
+  if (!clip || !asset || asset.kind !== 'video' || !asset.hasAudio) return { project: p, clipId: null };
+  const dur = clipDuration(clip);
+  let project = p;
+  let track = project.tracks.find((t) => t.kind === 'audio' && canPlace(project, t.id, clip.start, dur));
+  if (!track) {
+    const r = addTrack(project, 'audio');
+    project = r.project;
+    track = project.tracks.find((t) => t.id === r.trackId)!;
+  }
+  const audio = makeClip({
+    assetId: clip.assetId,
+    trackId: track.id,
+    start: clip.start,
+    in: clip.in,
+    out: clip.out,
+    speed: clip.speed,
+    volume: clip.volume || 1,
+    fadeIn: clip.fadeIn,
+    fadeOut: clip.fadeOut,
+  });
+  project = withClip(project, audio);
+  project = withClip(project, { ...project.clips[clipId], volume: 0, fadeIn: 0, fadeOut: 0 });
+  return { project, clipId: audio.id };
+}
+
+/** The clip that ends exactly where `clip` starts on the same track (within one frame). */
+export function previousAdjacent(p: Project, clip: Clip, tolerance = 1 / 60): Clip | null {
+  for (const c of Object.values(p.clips)) {
+    if (c.id !== clip.id && c.trackId === clip.trackId && Math.abs(clipEnd(c) - clip.start) <= tolerance) return c;
+  }
+  return null;
+}
+
+export const MAX_TRANSITION = 2;
+
+export function maxTransitionDuration(clip: Clip): Seconds {
+  return Math.max(0.1, Math.min(MAX_TRANSITION, clipDuration(clip) / 2));
+}
+
+export function setTransition(p: Project, clipId: string, transition: Transition | null): Project {
+  const clip = p.clips[clipId];
+  if (!clip) return p;
+  const t = transition && { ...transition, duration: Math.min(maxTransitionDuration(clip), Math.max(0.1, transition.duration)) };
+  return withClip(p, { ...clip, transitionIn: t });
+}
+
+/**
+ * Extra time each clip stays visible after its end, because the next clip transitions over it.
+ * Keys are clip ids of the *outgoing* clips.
+ */
+export function transitionTails(p: Project): Map<string, Seconds> {
+  const tails = new Map<string, Seconds>();
+  for (const c of Object.values(p.clips)) {
+    if (!c.transitionIn) continue;
+    const prev = previousAdjacent(p, c);
+    if (prev) tails.set(prev.id, Math.max(tails.get(prev.id) ?? 0, c.transitionIn.duration));
+  }
+  return tails;
 }

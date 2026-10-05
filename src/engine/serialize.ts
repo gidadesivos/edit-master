@@ -1,5 +1,26 @@
 import { DEFAULT_SETTINGS, makeTrack } from './project';
-import { DEFAULT_TRANSFORM, type Clip, type MediaAsset, type Project, type Track } from './types';
+import { KEYFRAME_PROPS } from './keyframes';
+import {
+  DEFAULT_ADJUSTMENTS,
+  DEFAULT_TEXT_STYLE,
+  DEFAULT_TRANSFORM,
+  type Adjustments,
+  type Clip,
+  type FilterPreset,
+  type Keyframe,
+  type MediaAsset,
+  type Project,
+  type TextAnimation,
+  type TextStyle,
+  type Track,
+  type Transition,
+  type TransitionType,
+} from './types';
+
+const FILTERS: FilterPreset[] = ['none', 'bw', 'sepia', 'vintage', 'warm', 'cool', 'vivid', 'fade', 'dramatic'];
+const TRANSITIONS: TransitionType[] = ['fade', 'black', 'slide-left', 'slide-up', 'wipe-left', 'zoom', 'circle'];
+const TEXT_ANIMS: TextAnimation[] = ['none', 'fade', 'slide-up', 'slide-down', 'pop', 'typewriter', 'blur'];
+const COLOR = /^#[0-9a-f]{6}$/i;
 
 export const PROJECT_FILE_EXTENSION = '.emproj';
 const FORMAT = 'edit-master-project';
@@ -13,6 +34,65 @@ const num = (v: unknown, fallback: number, min = -Infinity, max = Infinity): num
 const str = (v: unknown, fallback: string): string => (typeof v === 'string' ? v : fallback);
 const bool = (v: unknown, fallback: boolean): boolean => (typeof v === 'boolean' ? v : fallback);
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+const oneOf = <T extends string>(v: unknown, list: readonly T[], fallback: T): T => (list.includes(v as T) ? (v as T) : fallback);
+const color = (v: unknown, fallback: string): string => (typeof v === 'string' && COLOR.test(v) ? v : fallback);
+
+function normalizeAdjust(v: unknown): Adjustments {
+  const a = isObj(v) ? v : {};
+  const d = DEFAULT_ADJUSTMENTS;
+  return {
+    brightness: num(a.brightness, d.brightness, -1, 1),
+    contrast: num(a.contrast, d.contrast, -1, 1),
+    saturation: num(a.saturation, d.saturation, -1, 1),
+    hue: num(a.hue, d.hue, -180, 180),
+    temperature: num(a.temperature, d.temperature, -1, 1),
+    blur: num(a.blur, d.blur, 0, 1),
+    vignette: num(a.vignette, d.vignette, 0, 1),
+  };
+}
+
+function normalizeTransition(v: unknown): Transition | null {
+  if (!isObj(v) || !TRANSITIONS.includes(v.type as TransitionType)) return null;
+  return { type: v.type as TransitionType, duration: num(v.duration, 0.5, 0.1, 2) };
+}
+
+function normalizeKeyframes(v: unknown): Clip['keyframes'] {
+  const out: Clip['keyframes'] = {};
+  if (!isObj(v)) return out;
+  for (const prop of KEYFRAME_PROPS) {
+    const list = v[prop];
+    if (!Array.isArray(list)) continue;
+    const kfs: Keyframe[] = list
+      .filter((k): k is Record<string, unknown> => isObj(k) && typeof k.t === 'number' && typeof k.v === 'number')
+      .map((k) => ({ t: num(k.t, 0), v: num(k.v, 0) }))
+      .sort((a, b) => a.t - b.t);
+    if (kfs.length) out[prop] = kfs;
+  }
+  return out;
+}
+
+function normalizeText(v: unknown): TextStyle {
+  const t = isObj(v) ? v : {};
+  const d = DEFAULT_TEXT_STYLE;
+  return {
+    content: str(t.content, d.content).slice(0, 5000),
+    font: str(t.font, d.font).slice(0, 100),
+    size: num(t.size, d.size, 0.01, 1),
+    color: color(t.color, d.color),
+    bold: bool(t.bold, d.bold),
+    italic: bool(t.italic, d.italic),
+    align: oneOf(t.align, ['left', 'center', 'right'] as const, d.align),
+    strokeColor: color(t.strokeColor, d.strokeColor),
+    strokeWidth: num(t.strokeWidth, d.strokeWidth, 0, 0.5),
+    shadow: bool(t.shadow, d.shadow),
+    background: t.background === '' ? '' : color(t.background, ''),
+    backgroundOpacity: num(t.backgroundOpacity, d.backgroundOpacity, 0, 1),
+    animIn: oneOf(t.animIn, TEXT_ANIMS, d.animIn),
+    animOut: oneOf(t.animOut, TEXT_ANIMS, d.animOut),
+    animInDuration: num(t.animInDuration, d.animInDuration, 0, 5),
+    animOutDuration: num(t.animOutDuration, d.animOutDuration, 0, 5),
+  };
+}
 
 export class ProjectParseError extends Error {}
 
@@ -80,14 +160,17 @@ export function normalizeProject(r: Record<string, unknown>): Project {
 
   const clips: Record<string, Clip> = {};
   for (const c of Object.values(isObj(r.clips) ? r.clips : {})) {
-    if (!isObj(c) || typeof c.id !== 'string' || typeof c.assetId !== 'string') continue;
-    if (!assets[c.assetId] || typeof c.trackId !== 'string' || !trackIds.has(c.trackId)) continue;
+    if (!isObj(c) || typeof c.id !== 'string') continue;
+    const kind = c.kind === 'text' ? 'text' : 'media';
+    const assetId = kind === 'text' ? '' : typeof c.assetId === 'string' ? c.assetId : '';
+    if ((kind === 'media' && !assets[assetId]) || typeof c.trackId !== 'string' || !trackIds.has(c.trackId)) continue;
     const inPt = num(c.in, 0, 0);
     const out = num(c.out, inPt + 1, inPt + 0.001);
     const tr = isObj(c.transform) ? c.transform : {};
-    clips[c.id] = {
+    const clip: Clip = {
       id: c.id,
-      assetId: c.assetId,
+      kind,
+      assetId,
       trackId: c.trackId,
       start: num(c.start, 0, 0),
       in: inPt,
@@ -103,7 +186,13 @@ export function normalizeProject(r: Record<string, unknown>): Project {
       },
       fadeIn: num(c.fadeIn, 0, 0),
       fadeOut: num(c.fadeOut, 0, 0),
+      filter: oneOf(c.filter, FILTERS, 'none'),
+      adjust: normalizeAdjust(c.adjust),
+      transitionIn: normalizeTransition(c.transitionIn),
+      keyframes: normalizeKeyframes(c.keyframes),
     };
+    if (kind === 'text') clip.text = normalizeText(c.text);
+    clips[c.id] = clip;
   }
 
   return {

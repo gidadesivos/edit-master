@@ -31,6 +31,7 @@ const PATHS: Record<string, string> = {
   image: 'M3 5h18v14H3zM3 16l5-5 4 4 3-3 6 6M15 9.5a1.5 1.5 0 1 0 0-.01',
   download: 'M12 3v12M7 10l5 5 5-5M4 21h16',
   reset: 'M4 12a8 8 0 1 0 2.3-5.7M4 4v4h4',
+  text: 'M5 5h14M12 5v14M9 19h6',
 };
 
 export function Icon({ name, size = 16 }: { name: keyof typeof PATHS | string; size?: number }) {

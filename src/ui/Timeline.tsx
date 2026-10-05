@@ -15,12 +15,14 @@ import {
 import { useEditor } from '../engine/store';
 import { formatTime, rulerStep } from '../engine/time';
 import type { Clip, MediaAsset, Track } from '../engine/types';
+import { keyframeTimes } from '../engine/keyframes';
 import { useMedia } from '../media/library';
-import { addAssetToTimeline, deleteSelection, duplicateSelection, importMedia, splitAtPlayhead } from './actions';
+import { TRANSITIONS } from '../render/compositor';
+import { addAssetToTimeline, addTextAtPlayhead, deleteSelection, duplicateSelection, importMedia, splitAtPlayhead } from './actions';
 import { Icon } from './Icon';
 import { ASSET_DRAG_TYPE } from './MediaBin';
 
-const HEADER_W = 148;
+const HEADER_W = 168;
 const RULER_H = 26;
 const TRACK_H = { video: 64, audio: 48 } as const;
 const EDGE_PX = 7;
@@ -101,6 +103,7 @@ const ClipView = memo(function ClipView({ clip, asset, zoom, selected, offline, 
   const left = clip.start * zoom;
   const width = Math.max(2, clipDuration(clip) * zoom);
   const h = TRACK_H[trackKind] - 8;
+  const isText = clip.kind === 'text';
   const modeFor = (e: React.PointerEvent): DragMode => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const x = e.clientX - r.left;
@@ -112,16 +115,33 @@ const ClipView = memo(function ClipView({ clip, asset, zoom, selected, offline, 
   };
   return (
     <div
-      className={`clip ${asset?.kind ?? ''} ${selected ? 'selected' : ''} ${offline ? 'offline' : ''}`}
+      className={`clip ${isText ? 'text' : (asset?.kind ?? '')} ${selected ? 'selected' : ''} ${offline ? 'offline' : ''}`}
       style={{ left, width, height: h }}
       onPointerDown={(e) => onPointerDown(e, clip, modeFor(e))}
-      title={asset?.name}
+      title={isText ? clip.text?.content : asset?.name}
     >
       {asset && trackKind === 'video' && <Filmstrip clip={clip} asset={asset} width={width} />}
       {asset?.hasAudio && trackKind === 'audio' && <Waveform clip={clip} asset={asset} width={width} height={h - 14} />}
+      {isText && <span className="text-preview">{clip.text?.content}</span>}
       <span className="clip-label">
-        {offline && <Icon name="warning" size={11} />} {asset?.name ?? 'mídia removida'}
+        {offline && <Icon name="warning" size={11} />}
+        {isText ? <b className="t-badge">T</b> : null} {isText ? clip.text?.content.split('\n')[0] : (asset?.name ?? 'mídia removida')}
+        {clip.speed !== 1 && <b className="speed-badge">{clip.speed}x</b>}
+        {(clip.filter !== 'none' || Object.values(clip.adjust).some((v) => v !== 0)) && <b className="fx-badge">fx</b>}
       </span>
+      {clip.transitionIn && (
+        <span
+          className="transition-mark"
+          style={{ width: Math.max(10, clip.transitionIn.duration * zoom) }}
+          title={`Transição: ${TRANSITIONS[clip.transitionIn.type]} (${clip.transitionIn.duration.toFixed(2)}s)`}
+        />
+      )}
+      {selected &&
+        keyframeTimes(clip).map((t) => (
+          <span key={t} className="kf-mark" style={{ left: t * zoom }}>
+            ◆
+          </span>
+        ))}
       {(clip.fadeIn > 0 || clip.fadeOut > 0) && (
         <svg className="fades" width={width} height={h} preserveAspectRatio="none">
           {clip.fadeIn > 0 && <polygon points={`0,0 ${clip.fadeIn * zoom},0 0,${h}`} />}
@@ -377,6 +397,10 @@ export function Timeline() {
   return (
     <section className="panel timeline" aria-label="Timeline">
       <div className="timeline-toolbar">
+        <button className="ghost small" onClick={addTextAtPlayhead} title="Adicionar texto no cursor (T)">
+          <Icon name="text" /> Texto
+        </button>
+        <span className="sep" />
         <button className="icon" onClick={splitAtPlayhead} title="Dividir no cursor (S)" aria-label="Dividir">
           <Icon name="split" />
         </button>
@@ -473,7 +497,7 @@ export function Timeline() {
                         asset={project.assets[c.assetId]}
                         zoom={zoom}
                         selected={selected.has(c.id)}
-                        offline={status[c.assetId] !== 'ready'}
+                        offline={c.kind === 'media' && status[c.assetId] !== 'ready'}
                         trackKind={t.kind}
                         onPointerDown={onClipPointerDown}
                       />

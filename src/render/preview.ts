@@ -6,7 +6,17 @@ import { clipEnd, projectDuration } from '../engine/project';
 import { useEditor } from '../engine/store';
 import type { Clip, Project, Seconds } from '../engine/types';
 import { getMediaUrl, useMedia } from '../media/library';
-import { clipGainAt, drawFrame, isAudibleClip, isVisualClip, sourceTime, trackMap, type Layer } from './compositor';
+import {
+  clipGainAt,
+  isAudibleClip,
+  isVisualClip,
+  renderFrame,
+  sourceTime,
+  sourceTimeExtended,
+  trackMap,
+  visualEnd,
+  type FrameSource,
+} from './compositor';
 
 /** Seconds before a clip starts at which its element is created and pre-seeked. */
 const PRELOAD_AHEAD = 2;
@@ -131,9 +141,13 @@ export class PreviewEngine {
 
   private wanted(p: Project, t: Seconds, playing: boolean): Clip[] {
     return Object.values(p.clips).filter((c) => {
-      if (!isVisualClip(p, c) && !isAudibleClip(p, c)) return false;
+      if (c.kind === 'text') return false;
+      const visual = isVisualClip(p, c);
+      if (!visual && !isAudibleClip(p, c)) return false;
       const ahead = playing ? PRELOAD_AHEAD : 0;
-      return c.start - ahead <= t && t < clipEnd(c);
+      // Visual clips stay alive during the transition of the next clip over them.
+      const end = visual ? visualEnd(p, c) : clipEnd(c);
+      return c.start - ahead <= t && t < end;
     });
   }
 
@@ -230,7 +244,8 @@ export class PreviewEngine {
       if (!(el instanceof HTMLMediaElement)) continue;
 
       const active = clip.start <= t;
-      const target = sourceTime(clip, active ? t : clip.start);
+      const inTail = t >= clipEnd(clip);
+      const target = inTail ? sourceTimeExtended(p, clip, t) : sourceTime(clip, active ? t : clip.start);
       const gain = isAudibleClip(p, clip) ? clipGainAt(clip, tracks.get(clip.trackId), t) : 0;
       if (node.gain) node.gain.gain.value = gain;
       else el.volume = Math.min(1, gain);
@@ -259,35 +274,22 @@ export class PreviewEngine {
   }
 
   private draw(p: Project, t: Seconds, playing: boolean): void {
-    const visible = Object.values(p.clips)
-      .filter((c) => c.start <= t && t < clipEnd(c) && isVisualClip(p, c))
-      .sort((a, b) => {
-        const order = p.tracks;
-        return order.findIndex((x) => x.id === b.trackId) - order.findIndex((x) => x.id === a.trackId);
-      });
-
-    const layers: Layer[] = [];
-    for (const clip of visible) {
+    const provider = (clip: Clip): FrameSource | null | 'pending' => {
       const node = this.nodes.get(clip.id);
-      if (!node) continue;
+      if (!node) return playing ? null : 'pending';
       const el = node.el;
       if (el instanceof HTMLVideoElement) {
-        if (el.readyState < 2 || (!playing && el.seeking)) {
-          // Keep the previous frame on screen instead of flashing black while a seek is in flight.
-          if (!playing) return;
-          continue;
-        }
-        layers.push({ clip, source: el, width: el.videoWidth, height: el.videoHeight });
-      } else if (el instanceof HTMLImageElement) {
-        if (!el.complete || !el.naturalWidth) {
-          if (!playing) return;
-          continue;
-        }
-        layers.push({ clip, source: el, width: el.naturalWidth, height: el.naturalHeight });
+        // Keep the previous frame on screen instead of flashing black while a seek is in flight.
+        if (el.readyState < 2 || (!playing && el.seeking)) return playing ? null : 'pending';
+        return { source: el, width: el.videoWidth, height: el.videoHeight };
       }
-    }
+      if (el instanceof HTMLImageElement) {
+        if (!el.complete || !el.naturalWidth) return playing ? null : 'pending';
+        return { source: el, width: el.naturalWidth, height: el.naturalHeight };
+      }
+      return null;
+    };
     const { width, height } = this.canvas;
-    drawFrame(this.ctx, p.settings.background, layers, width, height);
-    this.needsDraw = false;
+    if (renderFrame(this.ctx, p, t, width, height, provider)) this.needsDraw = false;
   }
 }

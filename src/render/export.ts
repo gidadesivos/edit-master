@@ -26,7 +26,16 @@ import type { Clip, Project, Seconds } from '../engine/types';
 import { getMediaFile } from '../media/library';
 import { openInput } from '../media/probe';
 import type { SaveTarget } from '../platform/fs';
-import { clipGainAt, drawFrame, isAudibleClip, isVisualClip, trackMap, type Layer } from './compositor';
+import {
+  clipGainAt,
+  frameItems,
+  isAudibleClip,
+  renderFrame,
+  sourceTimeExtended,
+  trackMap,
+  visualEnd,
+  type FrameSource,
+} from './compositor';
 
 export type ExportQuality = 'medium' | 'high' | 'very-high';
 
@@ -72,7 +81,7 @@ export async function exportProject(project: Project, opts: ExportOptions): Prom
   const duration = projectDuration(project);
   if (duration <= 0) throw new Error('A timeline está vazia. Adicione clipes antes de exportar.');
 
-  const missing = Object.values(project.clips).filter((c) => !getMediaFile(c.assetId));
+  const missing = Object.values(project.clips).filter((c) => c.kind === 'media' && !getMediaFile(c.assetId));
   if (missing.length) throw new Error('Há mídias offline na timeline. Reconecte os arquivos antes de exportar.');
 
   const width = even(opts.width);
@@ -131,10 +140,7 @@ export async function exportProject(project: Project, opts: ExportOptions): Prom
 
   const tracks = trackMap(project);
   const clips = Object.values(project.clips);
-  const visual = clips.filter((c) => isVisualClip(project, c));
   const audible = clips.filter((c) => isAudibleClip(project, c));
-  const order = new Map(project.tracks.map((t, i) => [t.id, i]));
-  visual.sort((a, b) => (order.get(b.trackId) ?? 0) - (order.get(a.trackId) ?? 0));
 
   const totalFrames = Math.max(1, Math.ceil(duration * fps - 1e-6));
   let audioDone = 0;
@@ -144,11 +150,18 @@ export async function exportProject(project: Project, opts: ExportOptions): Prom
     const track = await r.input.getPrimaryVideoTrack();
     if (!track) return null;
     const sink = new CanvasSink(track, { poolSize: 3 });
-    const lastFrame = Math.ceil(clipEnd(clip) * fps - 1e-6);
+    // Includes the transition tail, during which the clip keeps playing past its out-point.
+    const lastFrame = Math.ceil(visualEnd(project, clip) * fps - 1e-6);
+    const end = clipEnd(clip);
     function* times() {
       for (let f = fromFrame; f < lastFrame; f++) {
-        const local = Math.max(0, f / fps - clip.start);
-        yield r.first + clip.in + Math.min(local * clip.speed, clip.out - clip.in - 1e-4);
+        const t = f / fps;
+        if (t < end) {
+          const local = Math.max(0, t - clip.start);
+          yield r.first + clip.in + Math.min(local * clip.speed, clip.out - clip.in - 1e-4);
+        } else {
+          yield r.first + sourceTimeExtended(project, clip, t);
+        }
       }
     }
     return { iterator: sink.canvasesAtTimestamps(times()), last: null };
@@ -217,8 +230,10 @@ export async function exportProject(project: Project, opts: ExportOptions): Prom
       const keyTimes = [t0, clip.start + clip.fadeIn, end - clip.fadeOut, t1]
         .filter((x) => x >= t0 && x <= t1)
         .sort((a, b) => a - b);
-      gain.gain.setValueAtTime(clipGainAt(clip, tr, t0), 0);
-      for (const k of keyTimes.slice(1)) gain.gain.linearRampToValueAtTime(clipGainAt(clip, tr, k), k - t0);
+      // Evaluate inside the clip: outside it the gain is 0, which must not bleed into ramps.
+      const g = (k: Seconds) => clipGainAt(clip, tr, Math.min(Math.max(k, clip.start), end - 1e-6));
+      gain.gain.setValueAtTime(g(t0), 0);
+      for (const k of keyTimes.slice(1)) gain.gain.linearRampToValueAtTime(g(k), k - t0);
 
       const from = Math.max(t0, clip.start);
       const to = Math.min(t1, end);
@@ -260,21 +275,22 @@ export async function exportProject(project: Project, opts: ExportOptions): Prom
         }
       }
 
-      const layers: Layer[] = [];
-      for (const clip of visual) {
-        const active = clip.start <= t + 1e-9 && t < clipEnd(clip) - 1e-9;
-        if (!active) {
-          if (cursors.has(clip.id)) await closeCursor(clip.id);
-          continue;
-        }
+      // Fetch every picture this frame needs (decoding is async), then composite synchronously.
+      const items = frameItems(project, t);
+      const activeIds = new Set(items.map((i) => i.clip.id));
+      for (const id of [...cursors.keys()]) if (!activeIds.has(id)) await closeCursor(id);
+      const frames = new Map<string, FrameSource>();
+      for (const { clip } of items) {
+        if (clip.kind !== 'media' || frames.has(clip.id)) continue;
         const asset = project.assets[clip.assetId];
+        if (!asset) continue;
         if (asset.kind === 'image') {
           let bmp = images.get(asset.id);
           if (!bmp) {
             bmp = await createImageBitmap(getMediaFile(asset.id)!);
             images.set(asset.id, bmp);
           }
-          layers.push({ clip, source: bmp, width: bmp.width, height: bmp.height });
+          frames.set(clip.id, { source: bmp, width: bmp.width, height: bmp.height });
           continue;
         }
         let cursor = cursors.get(clip.id);
@@ -288,11 +304,10 @@ export async function exportProject(project: Project, opts: ExportOptions): Prom
         if (!next.done && next.value) cursor.last = next.value;
         if (cursor.last) {
           const c = cursor.last.canvas;
-          layers.push({ clip, source: c, width: c.width, height: c.height });
+          frames.set(clip.id, { source: c, width: c.width, height: c.height });
         }
       }
-
-      drawFrame(ctx, project.settings.background, layers, width, height);
+      renderFrame(ctx, project, t, width, height, (clip) => frames.get(clip.id) ?? null);
       await videoSource.add(t, 1 / fps);
       if (f % 5 === 0) opts.onProgress(f / totalFrames, `Quadro ${f + 1} de ${totalFrames}`);
     }

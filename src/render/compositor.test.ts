@@ -1,21 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { clipGainAt, sourceTime } from './compositor';
-import { DEFAULT_TRANSFORM, type Clip, type Track } from '../engine/types';
+import { makeClip } from '../engine/project';
+import type { Clip, Track } from '../engine/types';
 
-const clip: Clip = {
-  id: 'c',
-  assetId: 'a',
-  trackId: 't',
-  start: 10,
-  in: 2,
-  out: 12,
-  speed: 1,
-  volume: 1,
-  opacity: 1,
-  transform: DEFAULT_TRANSFORM,
-  fadeIn: 2,
-  fadeOut: 4,
-};
+const clip: Clip = makeClip({ assetId: 'a', trackId: 't', start: 10, in: 2, out: 12, fadeIn: 2, fadeOut: 4 });
 const track: Track = { id: 't', kind: 'audio', name: 'A', muted: false, hidden: false };
 
 describe('compositor helpers', () => {
