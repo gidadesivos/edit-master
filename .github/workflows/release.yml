@@ -1,0 +1,70 @@
+# Publishes a new version of the Windows app.
+# Run it by pushing a tag (git tag v0.2.0 && git push origin v0.2.0) or from the Actions tab.
+# The release contains the installer and latest.json, which installed apps read to auto-update.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Publicar instalador Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Conferir versão da tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          pkg="v$(node -p "require('./package.json').version")"
+          if [ "$pkg" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::A tag ${GITHUB_REF_NAME} não bate com package.json ($pkg). Use 'npm run release -- <versão>'."
+            exit 1
+          fi
+
+      - name: Conferir chave de assinatura
+        shell: bash
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::error::Secret TAURI_SIGNING_PRIVATE_KEY não configurado (veja o README, seção 'Configuração única')."
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - run: npm ci
+      - run: npm test
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: v__VERSION__
+          releaseName: Edit Master v__VERSION__
+          releaseBody: |
+            **Instalar:** baixe o arquivo `Edit Master_x.x.x_x64-setup.exe` abaixo e execute.
+            Quem já tem o Edit Master instalado recebe esta versão automaticamente ao abrir o app.
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true
