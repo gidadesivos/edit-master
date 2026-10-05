@@ -1,7 +1,7 @@
 {
   "name": "edit-master",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Editor de vídeo gratuito, local e offline — roda no navegador e como app Windows.",
   "type": "module",
   "scripts": {
