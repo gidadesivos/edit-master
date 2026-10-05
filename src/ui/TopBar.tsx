@@ -2,6 +2,7 @@ import { useEditor } from '../engine/store';
 import { APP_VERSION } from '../platform/updater';
 import { newProject, openProjectFile, saveProjectFile } from './actions';
 import { Icon } from './Icon';
+import { VersionButton } from './UpdateBanner';
 
 export function TopBar({ onExport }: { onExport: () => void }) {
   const name = useEditor((s) => s.project.name);
@@ -16,7 +17,7 @@ export function TopBar({ onExport }: { onExport: () => void }) {
       <div className="brand">
         <img src="./icon.svg" alt="" width={22} height={22} />
         <span>Edit Master</span>
-        <small>v{APP_VERSION}</small>
+        <VersionButton version={APP_VERSION} />
       </div>
       <div className="topbar-group">
         <button className="ghost" onClick={newProject} title="Novo projeto">

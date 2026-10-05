@@ -169,6 +169,8 @@ export function makeClip(fields: Pick<Clip, 'assetId' | 'trackId' | 'start' | 'i
     adjust: { ...DEFAULT_ADJUSTMENTS },
     transitionIn: null,
     keyframes: {},
+    chromaKey: null,
+    removeBg: false,
     ...fields,
   };
 }

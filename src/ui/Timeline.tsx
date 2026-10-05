@@ -219,7 +219,7 @@ function TrackHeader({ track }: { track: Track }) {
 
 // ---------------------------------------------------------------------------------------------
 
-export function Timeline() {
+export function Timeline({ onCaptions }: { onCaptions: () => void }) {
   const project = useEditor((s) => s.project);
   const zoom = useEditor((s) => s.zoom);
   const selection = useEditor((s) => s.selection);
@@ -399,6 +399,9 @@ export function Timeline() {
       <div className="timeline-toolbar">
         <button className="ghost small" onClick={addTextAtPlayhead} title="Adicionar texto no cursor (T)">
           <Icon name="text" /> Texto
+        </button>
+        <button className="ghost small" onClick={onCaptions} title="Gerar legendas automaticamente a partir da fala">
+          <Icon name="captions" /> Legendas
         </button>
         <span className="sep" />
         <button className="icon" onClick={splitAtPlayhead} title="Dividir no cursor (S)" aria-label="Dividir">

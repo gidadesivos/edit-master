@@ -2,7 +2,9 @@ import { DEFAULT_SETTINGS, makeTrack } from './project';
 import { KEYFRAME_PROPS } from './keyframes';
 import {
   DEFAULT_ADJUSTMENTS,
+  DEFAULT_CHROMA_KEY,
   DEFAULT_TEXT_STYLE,
+  type ChromaKey,
   DEFAULT_TRANSFORM,
   type Adjustments,
   type Clip,
@@ -69,6 +71,17 @@ function normalizeKeyframes(v: unknown): Clip['keyframes'] {
     if (kfs.length) out[prop] = kfs;
   }
   return out;
+}
+
+function normalizeChroma(v: unknown): ChromaKey | null {
+  if (!isObj(v)) return null;
+  const d = DEFAULT_CHROMA_KEY;
+  return {
+    color: color(v.color, d.color),
+    similarity: num(v.similarity, d.similarity, 0, 1),
+    smoothness: num(v.smoothness, d.smoothness, 0, 1),
+    spill: num(v.spill, d.spill, 0, 1),
+  };
 }
 
 function normalizeText(v: unknown): TextStyle {
@@ -190,6 +203,8 @@ export function normalizeProject(r: Record<string, unknown>): Project {
       adjust: normalizeAdjust(c.adjust),
       transitionIn: normalizeTransition(c.transitionIn),
       keyframes: normalizeKeyframes(c.keyframes),
+      chromaKey: normalizeChroma(c.chromaKey),
+      removeBg: kind === 'media' && bool(c.removeBg, false),
     };
     if (kind === 'text') clip.text = normalizeText(c.text);
     clips[c.id] = clip;

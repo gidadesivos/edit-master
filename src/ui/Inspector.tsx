@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { hasKeyframes, keyframeAt, keyframeTimes, removeKeyframe, setProp, upsertKeyframe, valueAt } from '../engine/keyframes';
 import {
   MAX_SPEED,
@@ -15,6 +15,8 @@ import { useEditor } from '../engine/store';
 import { formatDuration } from '../engine/time';
 import {
   DEFAULT_ADJUSTMENTS,
+  DEFAULT_CHROMA_KEY,
+  type ChromaKey,
   type Adjustments,
   type Clip,
   type FilterPreset,
@@ -27,6 +29,7 @@ import {
 } from '../engine/types';
 import { useMedia } from '../media/library';
 import { FILTER_PRESETS, FONTS, TEXT_ANIMATIONS, TRANSITIONS } from '../render/compositor';
+import { ensureSegmenter, onSegmenterChange, segmenterState } from '../render/effects';
 import { extractAudioFromClip, resetClipTransform } from './actions';
 import { Icon } from './Icon';
 
@@ -318,6 +321,89 @@ function AudioTab({ clip, canExtract }: { clip: Clip; canExtract: boolean }) {
   );
 }
 
+function useSegmenter() {
+  const state = useSyncExternalStore(onSegmenterChange, () => segmenterState().status + '|' + segmenterState().error);
+  const [status, error] = state.split('|');
+  return { status, error };
+}
+
+type EyeDropperCtor = new () => { open(): Promise<{ sRGBHex: string }> };
+
+function CutoutTab({ clip }: { clip: Clip }) {
+  const seg = useSegmenter();
+  const ck = clip.chromaKey;
+  const setChroma = (patch: Partial<ChromaKey>) => (b: Project) => {
+    const c = b.clips[clip.id];
+    return c?.chromaKey ? updateClip(b, clip.id, { chromaKey: { ...c.chromaKey, ...patch } }) : b;
+  };
+  const EyeDropper = (window as unknown as { EyeDropper?: EyeDropperCtor }).EyeDropper;
+  return (
+    <>
+      <fieldset>
+        <legend>Remover fundo (IA)</legend>
+        <label className="check big">
+          <input
+            type="checkbox"
+            checked={clip.removeBg}
+            onChange={(e) => {
+              const on = e.target.checked;
+              if (on) void ensureSegmenter().catch(() => undefined);
+              s().commit((p) => updateClip(p, clip.id, { removeBg: on }));
+            }}
+          />
+          Remover o fundo atrás de pessoas
+        </label>
+        {clip.removeBg && seg.status === 'loading' && <p className="muted small-text">Carregando o modelo de recorte…</p>}
+        {clip.removeBg && seg.status === 'error' && <p className="warning-text">Não foi possível iniciar o recorte: {seg.error}</p>}
+        <p className="muted small-text">Funciona melhor com pessoas em primeiro plano. Processado no seu computador, sem internet.</p>
+      </fieldset>
+      <fieldset>
+        <legend>Chroma key (tela verde)</legend>
+        <label className="check big">
+          <input
+            type="checkbox"
+            checked={!!ck}
+            onChange={(e) => s().commit((p) => updateClip(p, clip.id, { chromaKey: e.target.checked ? { ...DEFAULT_CHROMA_KEY } : null }))}
+          />
+          Remover uma cor de fundo
+        </label>
+        {ck && (
+          <>
+            <div className="row-buttons">
+              <label className="color-field" title="Cor a remover">
+                <input type="color" value={ck.color} onChange={(e) => s().commit(setChroma({ color: e.target.value }))} />
+                Cor
+              </label>
+              {(['#00ff00', '#0047bb'] as const).map((c) => (
+                <button key={c} className={`chip ${ck.color === c ? 'active' : ''}`} onClick={() => s().commit(setChroma({ color: c }))}>
+                  {c === '#00ff00' ? 'Verde' : 'Azul'}
+                </button>
+              ))}
+              {EyeDropper && (
+                <button
+                  className="chip"
+                  title="Escolher a cor clicando no vídeo"
+                  onClick={() =>
+                    void new EyeDropper()
+                      .open()
+                      .then((r) => s().commit(setChroma({ color: r.sRGBHex.slice(0, 7) })))
+                      .catch(() => undefined)
+                  }
+                >
+                  Conta-gotas
+                </button>
+              )}
+            </div>
+            <Slider label="Semelhança" value={ck.similarity} min={0} max={1} step={0.01} format={pct} apply={(b, v) => setChroma({ similarity: v })(b)} defaultValue={DEFAULT_CHROMA_KEY.similarity} />
+            <Slider label="Suavidade" value={ck.smoothness} min={0} max={0.5} step={0.005} format={pct} apply={(b, v) => setChroma({ smoothness: v })(b)} defaultValue={DEFAULT_CHROMA_KEY.smoothness} />
+            <Slider label="Reduzir reflexo da cor" value={ck.spill} min={0} max={1} step={0.01} format={pct} apply={(b, v) => setChroma({ spill: v })(b)} defaultValue={DEFAULT_CHROMA_KEY.spill} />
+          </>
+        )}
+      </fieldset>
+    </>
+  );
+}
+
 // ---------------------------------------------------------------------------------------------
 // Text
 
@@ -468,12 +554,13 @@ function AnimationTab({ clip }: { clip: Clip }) {
 
 // ---------------------------------------------------------------------------------------------
 
-type TabId = 'text' | 'basic' | 'animation' | 'filters' | 'transition' | 'speed' | 'audio';
+type TabId = 'text' | 'basic' | 'animation' | 'filters' | 'cutout' | 'transition' | 'speed' | 'audio';
 const TAB_LABELS: Record<TabId, string> = {
   text: 'Texto',
   basic: 'Básico',
   animation: 'Animação',
   filters: 'Filtros',
+  cutout: 'Recorte',
   transition: 'Transição',
   speed: 'Velocidade',
   audio: 'Áudio',
@@ -489,7 +576,7 @@ function ClipInspector({ clip }: { clip: Clip }) {
   const tabs: TabId[] = isText
     ? ['text', 'basic', 'animation', 'transition']
     : visual
-      ? ['basic', 'filters', 'transition', ...(asset?.kind === 'video' ? (['speed'] as TabId[]) : []), ...(asset?.hasAudio ? (['audio'] as TabId[]) : [])]
+      ? ['basic', 'filters', 'cutout', 'transition', ...(asset?.kind === 'video' ? (['speed'] as TabId[]) : []), ...(asset?.hasAudio ? (['audio'] as TabId[]) : [])]
       : ['audio', 'speed'];
   const current = tabs.includes(tab) ? tab : tabs[0];
 
@@ -511,6 +598,7 @@ function ClipInspector({ clip }: { clip: Clip }) {
       {current === 'basic' && <BasicTab clip={clip} />}
       {current === 'animation' && <AnimationTab clip={clip} />}
       {current === 'filters' && <FiltersTab clip={clip} />}
+      {current === 'cutout' && <CutoutTab clip={clip} />}
       {current === 'transition' && <TransitionTab clip={clip} />}
       {current === 'speed' && <SpeedTab clip={clip} />}
       {current === 'audio' && <AudioTab clip={clip} canExtract={visual && asset?.kind === 'video' && !!asset.hasAudio} />}

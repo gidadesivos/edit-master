@@ -211,3 +211,14 @@ describe('compatibility', () => {
     expect(back.clips[a].transitionIn).toBeNull();
   });
 });
+
+describe('phase 3 fields', () => {
+  it('round-trips chroma key and background removal', () => {
+    const { p, a } = withTwoClips();
+    const q = { ...p, clips: { ...p.clips, [a]: { ...p.clips[a], removeBg: true, chromaKey: { color: '#00ff00', similarity: 0.5, smoothness: 0.1, spill: 0.3 } } } };
+    const back = parseProject(serializeProject(q));
+    expect(back.clips[a].removeBg).toBe(true);
+    expect(back.clips[a].chromaKey).toEqual({ color: '#00ff00', similarity: 0.5, smoothness: 0.1, spill: 0.3 });
+    expect(parseProject(serializeProject(p)).clips[a].chromaKey).toBeNull();
+  });
+});

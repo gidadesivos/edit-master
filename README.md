@@ -30,6 +30,13 @@ Seus arquivos nunca saem do seu computador.
 - **Velocidade** de 0,25x a 4x (os clipes seguintes se ajustam sozinhos)
 - **Separar áudio** do vídeo para uma faixa de áudio
 
+**Fase 3 (IA no seu computador)**
+- **Legendas automáticas** com Whisper: botão *Legendas* na timeline → escolha idioma e qualidade. O áudio é processado
+  localmente; o modelo (40–250 MB) é baixado do Hugging Face **uma única vez** e depois funciona offline
+- **Remover fundo** de pessoas (aba *Recorte*), com modelo MediaPipe embutido no app — 100% offline
+- **Chroma key** (tela verde/azul) com conta-gotas, semelhança, suavidade e redução de reflexo
+- **Verificar atualizações** manualmente clicando no número da versão (no topo)
+
 ### Atalhos
 
 | Tecla | Ação |
@@ -107,5 +114,5 @@ O preview e a exportação usam o **mesmo compositor**, então o que aparece na 
 ## Próximas fases
 
 - **Fase 2 (restante)**: reverso, curvas de velocidade, mais fontes embutidas, máscaras
-- **Fase 3**: legendas automáticas (Whisper local), remover fundo, chroma key, proxies para 4K
+- **Fase 3 (restante)**: proxies para editar 4K com fluidez em PC fraco, estabilização, redução de ruído
 - **Fase 4**: modo offline completo da versão web (PWA), idiomas, mais formatos de exportação

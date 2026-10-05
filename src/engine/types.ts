@@ -103,6 +103,17 @@ export interface Keyframe {
   v: number;
 }
 
+/** Green/blue screen removal. */
+export interface ChromaKey {
+  color: string;
+  /** 0..1 — how far from the key colour still counts as background. */
+  similarity: number;
+  /** 0..1 — width of the soft edge. */
+  smoothness: number;
+  /** 0..1 — removes the key colour's tint from the edges. */
+  spill: number;
+}
+
 export interface Clip {
   id: string;
   kind: ClipKind;
@@ -132,6 +143,9 @@ export interface Clip {
   keyframes: Partial<Record<KeyframeProp, Keyframe[]>>;
   /** Present for text clips. */
   text?: TextStyle;
+  chromaKey: ChromaKey | null;
+  /** Remove the background with the on-device segmentation model (people). */
+  removeBg: boolean;
 }
 
 export interface ProjectSettings {
@@ -185,3 +199,5 @@ export const DEFAULT_TEXT_STYLE: TextStyle = {
   animInDuration: 0.4,
   animOutDuration: 0.4,
 };
+
+export const DEFAULT_CHROMA_KEY: ChromaKey = { color: '#00ff00', similarity: 0.4, smoothness: 0.08, spill: 0.5 };

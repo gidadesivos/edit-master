@@ -32,6 +32,9 @@ const PATHS: Record<string, string> = {
   download: 'M12 3v12M7 10l5 5 5-5M4 21h16',
   reset: 'M4 12a8 8 0 1 0 2.3-5.7M4 4v4h4',
   text: 'M5 5h14M12 5v14M9 19h6',
+  captions: 'M3 6h18v12H3zM7 11h4M13 11h4M7 14h7M16 14h1',
+  scissors: 'M6 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM8.1 7.9 20 20M8.1 16.1 20 4',
+  refresh: 'M20 12a8 8 0 1 1-2.3-5.7M20 4v4h-4',
 };
 
 export function Icon({ name, size = 16 }: { name: keyof typeof PATHS | string; size?: number }) {

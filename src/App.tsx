@@ -15,6 +15,7 @@ import {
   stepFrames,
   togglePlay,
 } from './ui/actions';
+import { CaptionsDialog } from './ui/CaptionsDialog';
 import { ExportDialog } from './ui/ExportDialog';
 import { Inspector } from './ui/Inspector';
 import { MediaBin } from './ui/MediaBin';
@@ -195,6 +196,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
 
 export function App() {
   const [exporting, setExporting] = useState(false);
+  const [captioning, setCaptioning] = useState(false);
   const ready = useAutosave();
   const dragging = useGlobalDrop();
   useShortcuts(() => setExporting(true));
@@ -210,8 +212,9 @@ export function App() {
           <PreviewPanel />
           <Inspector />
         </main>
-        <Timeline />
+        <Timeline onCaptions={() => setCaptioning(true)} />
         {exporting && <ExportDialog onClose={() => setExporting(false)} />}
+        {captioning && <CaptionsDialog onClose={() => setCaptioning(false)} />}
         {dragging && <div className="drop-overlay">Solte para importar</div>}
         <Toasts />
       </div>

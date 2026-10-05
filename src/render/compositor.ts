@@ -4,6 +4,7 @@
  */
 import { valueAt } from '../engine/keyframes';
 import { clipDuration, clipEnd, previousAdjacent, transitionTails } from '../engine/project';
+import { applyChromaKey, removeBackground } from './effects';
 import type { Clip, FilterPreset, Project, Seconds, TextAnimation, Track, TransitionType } from '../engine/types';
 
 type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
@@ -420,6 +421,8 @@ function drawItem(ctx: Ctx2D, item: FrameItem, src: FrameSource | null, W: numbe
     target.scale(scale, scale);
     drawTextContent(target, clip, local, H);
   } else if (src) {
+    if (clip.chromaKey) src = applyChromaKey(src, clip.chromaKey);
+    if (clip.removeBg) src = removeBackground(src, clip.id);
     const fit = Math.min(W / src.width, H / src.height) * scale;
     const w = src.width * fit;
     const h = src.height * fit;

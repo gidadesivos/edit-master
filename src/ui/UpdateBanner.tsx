@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { create } from 'zustand';
 import { serializeProject } from '../engine/serialize';
 import { useEditor } from '../engine/store';
 import { saveAutosave } from '../media/persist';
@@ -8,23 +9,47 @@ import { toast } from './toast';
 
 const CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
 
+interface UpdateState {
+  update: AvailableUpdate | null;
+  checking: boolean;
+  dismissed: boolean;
+}
+
+const useUpdate = create<UpdateState>(() => ({ update: null, checking: false, dismissed: false }));
+
+/** Checks GitHub Releases. When `manual`, the result (including errors) is reported to the user. */
+export async function checkUpdatesNow(manual = false): Promise<void> {
+  if (!isDesktop) {
+    if (manual) toast('A versão no navegador já é sempre a mais recente — basta recarregar a página.', 'info');
+    return;
+  }
+  if (useUpdate.getState().checking) return;
+  useUpdate.setState({ checking: true });
+  try {
+    const update = await checkForUpdate();
+    useUpdate.setState({ update, dismissed: false });
+    if (manual && !update) toast('Você já está usando a versão mais recente.', 'success');
+  } catch (err) {
+    console.warn('update check failed', err);
+    if (manual) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast(`Não foi possível verificar atualizações: ${msg}. Verifique sua conexão com a internet.`, 'error');
+    }
+  } finally {
+    useUpdate.setState({ checking: false });
+  }
+}
+
 /** Shows a banner when a new version is published on GitHub Releases (Windows app only). */
 export function UpdateBanner() {
-  const [update, setUpdate] = useState<AvailableUpdate | null>(null);
+  const { update, dismissed } = useUpdate();
   const [progress, setProgress] = useState<number | null | undefined>(undefined);
-  const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
     if (!isDesktop) return;
-    let alive = true;
-    const run = () =>
-      checkForUpdate()
-        .then((u) => alive && u && setUpdate(u))
-        .catch((err) => console.warn('update check failed', err));
-    const first = setTimeout(run, 3000);
-    const timer = setInterval(run, CHECK_EVERY_MS);
+    const first = setTimeout(() => void checkUpdatesNow(false), 3000);
+    const timer = setInterval(() => void checkUpdatesNow(false), CHECK_EVERY_MS);
     return () => {
-      alive = false;
       clearTimeout(first);
       clearInterval(timer);
     };
@@ -58,11 +83,22 @@ export function UpdateBanner() {
           <button className="primary small" onClick={() => void install()}>
             Atualizar e reiniciar
           </button>
-          <button className="ghost small" onClick={() => setDismissed(true)}>
+          <button className="ghost small" onClick={() => useUpdate.setState({ dismissed: true })}>
             Depois
           </button>
         </>
       )}
     </div>
+  );
+}
+
+/** Version label in the top bar; clicking it checks for updates. */
+export function VersionButton({ version }: { version: string }) {
+  const checking = useUpdate((s) => s.checking);
+  return (
+    <button className="version-btn" onClick={() => void checkUpdatesNow(true)} title="Verificar atualizações" disabled={checking}>
+      v{version}
+      <Icon name="refresh" size={12} />
+    </button>
   );
 }

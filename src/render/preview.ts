@@ -6,6 +6,7 @@ import { clipEnd, projectDuration } from '../engine/project';
 import { useEditor } from '../engine/store';
 import type { Clip, Project, Seconds } from '../engine/types';
 import { getMediaUrl, useMedia } from '../media/library';
+import { onSegmenterChange } from './effects';
 import {
   clipGainAt,
   isAudibleClip,
@@ -67,6 +68,7 @@ export class PreviewEngine {
         if (s.playing !== prev.playing) this.onPlayingChange(s.playing);
         if (s.project !== prev.project || s.playhead !== prev.playhead) this.needsDraw = true;
       }),
+      onSegmenterChange(() => (this.needsDraw = true)),
       useMedia.subscribe((s, prev) => {
         if (s.revision !== prev.revision) {
           this.dropStaleNodes();

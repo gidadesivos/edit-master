@@ -3,7 +3,6 @@
  * shared compositor, mixes audio with an OfflineAudioContext and encodes an MP4 — all locally.
  */
 import {
-  AudioBufferSink,
   AudioBufferSource,
   BufferTarget,
   CanvasSink,
@@ -16,23 +15,21 @@ import {
   StreamTarget,
   getFirstEncodableAudioCodec,
   getFirstEncodableVideoCodec,
-  type Input,
   type StreamTargetChunk,
-  type WrappedAudioBuffer,
   type WrappedCanvas,
 } from 'mediabunny';
 import { clipEnd, projectDuration } from '../engine/project';
 import type { Clip, Project, Seconds } from '../engine/types';
 import { getMediaFile } from '../media/library';
+import { createAudioMixer, type AssetReader } from './audioMix';
+import { ensureSegmenter, resetEffectsState } from './effects';
 import { openInput } from '../media/probe';
 import type { SaveTarget } from '../platform/fs';
 import {
-  clipGainAt,
   frameItems,
   isAudibleClip,
   renderFrame,
   sourceTimeExtended,
-  trackMap,
   visualEnd,
   type FrameSource,
 } from './compositor';
@@ -63,11 +60,6 @@ const AUDIO_WINDOW = 1; // seconds of audio mixed per step
 
 const QUALITY = { medium: QUALITY_MEDIUM, high: QUALITY_HIGH, 'very-high': QUALITY_VERY_HIGH } as const;
 
-interface AssetReader {
-  input: Input;
-  first: number;
-}
-
 interface VideoCursor {
   iterator: AsyncGenerator<WrappedCanvas | null, void, unknown>;
   last: WrappedCanvas | null;
@@ -83,6 +75,16 @@ export async function exportProject(project: Project, opts: ExportOptions): Prom
 
   const missing = Object.values(project.clips).filter((c) => c.kind === 'media' && !getMediaFile(c.assetId));
   if (missing.length) throw new Error('Há mídias offline na timeline. Reconecte os arquivos antes de exportar.');
+
+  if (Object.values(project.clips).some((c) => c.removeBg)) {
+    opts.onProgress(0, 'Carregando o recorte de fundo…');
+    try {
+      await ensureSegmenter();
+    } catch {
+      throw new Error('Não foi possível iniciar a remoção de fundo neste computador.');
+    }
+  }
+  resetEffectsState();
 
   const width = even(opts.width);
   const height = even(opts.height);
@@ -138,9 +140,6 @@ export async function exportProject(project: Project, opts: ExportOptions): Prom
     return r;
   };
 
-  const tracks = trackMap(project);
-  const clips = Object.values(project.clips);
-  const audible = clips.filter((c) => isAudibleClip(project, c));
 
   const totalFrames = Math.max(1, Math.ceil(duration * fps - 1e-6));
   let audioDone = 0;
@@ -175,89 +174,8 @@ export async function exportProject(project: Project, opts: ExportOptions): Prom
     }
   };
 
-  /**
-   * One continuous decoder per audio clip across all mixing windows. Restarting a decoder for every
-   * window shifts some codecs (e.g. Opus) by their pre-skip and produces audible clicks.
-   */
-  interface AudioCursor {
-    iterator: AsyncGenerator<WrappedAudioBuffer, void, unknown>;
-    /** Decoded buffers that still overlap the current or future windows. */
-    pending: Array<{ buffer: AudioBuffer; pos: Seconds; end: Seconds }>;
-    done: boolean;
-  }
-  const audioCursors = new Map<string, AudioCursor | null>();
-
-  const audioCursor = async (clip: Clip): Promise<AudioCursor | null> => {
-    if (audioCursors.has(clip.id)) return audioCursors.get(clip.id)!;
-    const r = await reader(clip.assetId);
-    const track = await r.input.getPrimaryAudioTrack();
-    const cursor = track
-      ? {
-          iterator: new AudioBufferSink(track).buffers(Math.max(0, r.first + clip.in - 0.05), r.first + clip.out),
-          pending: [],
-          done: false,
-        }
-      : null;
-    audioCursors.set(clip.id, cursor);
-    return cursor;
-  };
-
-  const mixAudio = async (t0: Seconds, t1: Seconds): Promise<AudioBuffer> => {
-    const length = Math.max(1, Math.round((t1 - t0) * SAMPLE_RATE));
-    const ac = new OfflineAudioContext(2, length, SAMPLE_RATE);
-    for (const clip of audible) {
-      const end = clipEnd(clip);
-      if (end <= t0 || clip.start >= t1) continue;
-      const cursor = await audioCursor(clip);
-      if (!cursor) continue;
-      const r = readers.get(clip.assetId)!;
-
-      // Decode until we have audio covering the whole window.
-      while (!cursor.done && (!cursor.pending.length || cursor.pending[cursor.pending.length - 1].end < t1)) {
-        const next = await cursor.iterator.next();
-        if (next.done) {
-          cursor.done = true;
-          break;
-        }
-        const { buffer, timestamp } = next.value;
-        const pos = clip.start + (timestamp - r.first - clip.in) / clip.speed;
-        cursor.pending.push({ buffer, pos, end: pos + buffer.duration / clip.speed });
-      }
-
-      const gain = ac.createGain();
-      gain.connect(ac.destination);
-      const tr = tracks.get(clip.trackId);
-      const keyTimes = [t0, clip.start + clip.fadeIn, end - clip.fadeOut, t1]
-        .filter((x) => x >= t0 && x <= t1)
-        .sort((a, b) => a - b);
-      // Evaluate inside the clip: outside it the gain is 0, which must not bleed into ramps.
-      const g = (k: Seconds) => clipGainAt(clip, tr, Math.min(Math.max(k, clip.start), end - 1e-6));
-      gain.gain.setValueAtTime(g(t0), 0);
-      for (const k of keyTimes.slice(1)) gain.gain.linearRampToValueAtTime(g(k), k - t0);
-
-      const from = Math.max(t0, clip.start);
-      const to = Math.min(t1, end);
-      for (const item of cursor.pending) {
-        if (item.end <= from || item.pos >= to) continue;
-        let pos = item.pos;
-        let offset = 0;
-        if (pos < from) {
-          offset = (from - pos) * clip.speed;
-          pos = from;
-        }
-        const length = Math.min(item.buffer.duration - offset, (to - pos) * clip.speed);
-        if (length <= 0) continue;
-        const node = ac.createBufferSource();
-        node.buffer = item.buffer;
-        node.playbackRate.value = clip.speed;
-        node.connect(gain);
-        node.start(pos - t0, offset, length);
-      }
-      // Buffers entirely before the next window are no longer needed.
-      cursor.pending = cursor.pending.filter((item) => item.end > t1);
-    }
-    return ac.startRendering();
-  };
+  const mixer = createAudioMixer(project, SAMPLE_RATE, 2, reader);
+  const mixAudio = (t0: Seconds, t1: Seconds) => mixer.mix(t0, t1);
 
   try {
     await output.start();
@@ -333,7 +251,7 @@ export async function exportProject(project: Project, opts: ExportOptions): Prom
     throw err;
   } finally {
     for (const id of [...cursors.keys()]) await closeCursor(id).catch(() => undefined);
-    for (const c of audioCursors.values()) await c?.iterator.return(undefined).catch(() => undefined);
+    await mixer.dispose().catch(() => undefined);
     for (const r of readers.values()) r.input.dispose();
     for (const b of images.values()) b.close();
   }
