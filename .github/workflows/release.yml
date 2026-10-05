@@ -32,14 +32,19 @@ jobs:
             exit 1
           fi
 
+      # Without the signing key the installer is still built, but without auto-update files for this
+      # version. Installed apps keep checking and will update from the next release signed with the key.
       - name: Conferir chave de assinatura
+        id: key
         shell: bash
         env:
           KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
           if [ -z "$KEY" ]; then
-            echo "::error::Secret TAURI_SIGNING_PRIVATE_KEY não configurado (veja o README, seção 'Configuração única')."
-            exit 1
+            echo "::warning::Secret TAURI_SIGNING_PRIVATE_KEY não configurado: esta versão sai sem arquivos de atualização automática (veja o README)."
+            echo "args=--config src-tauri/tauri.nokey.conf.json" >> "$GITHUB_OUTPUT"
+          else
+            echo "args=" >> "$GITHUB_OUTPUT"
           fi
 
       - uses: actions/setup-node@v4
@@ -68,3 +73,4 @@ jobs:
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
+          args: ${{ steps.key.outputs.args }}
